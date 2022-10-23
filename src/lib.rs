@@ -1,44 +1,63 @@
 #![no_std]
-//! Driver to write characters to LCD displays with a LM1602 connected via i2c like [this one] with
-//! 16x2 characters. It requires a I2C instance implementing [`embedded_hal::blocking::i2c::Write`]
-//! and a instance to delay execution with [`embedded_hal::blocking::delay::DelayMs`].
+//! Driver to write characters to 20x4 LCD displays connected via i2c.
+//! It requires an I2C instance implementing [`embedded_hal::blocking::i2c::Write`]
+//! and an instance to delay execution with [`embedded_hal::blocking::delay::DelayMs`].
 //!
 //! Usage:
 //! ```
-//! const LCD_ADDRESS: u8 = 0x27; // Address depends on hardware, see link below
+//! // Example using rp2040 rp-pico board support crate (also called BSP)
+//! const LCD_ADDRESS: u8 = 0x27; // Address depends on hardware, see datasheet link below
 //!
-//! // Create a I2C instance, needs to implement embedded_hal::blocking::i2c::Write, this
-//! // particular uses the arduino_hal crate for avr microcontrollers like the arduinos.
-//! let dp = arduino_hal::Peripherals::take().unwrap();
-//! let pins = arduino_hal::pins!(dp);
-//! let mut i2c = arduino_hal::I2c::new(
-//!     dp.TWI, //
-//!     pins.a4.into_pull_up_input(), // use respective pins
-//!     pins.a5.into_pull_up_input(),
-//!     50000,
+//! // Create a I2C instance
+//! let sda_pin = pins.gpio2.into_mode::<gpio::FunctionI2C>();
+//! let scl_pin = pins.gpio3.into_mode::<gpio::FunctionI2C>();
+//!
+//! let mut i2c = I2C::i2c1(
+//!     pac.I2C1,
+//!     sda_pin,
+//!     scl_pin,
+//!     100.kHz(),
+//!     &mut pac.RESETS,
+//!     &clocks.system_clock,
 //! );
-//! let mut delay = arduino_hal::Delay::new();
 //!
-//! let mut lcd = lcd_lcm1602_i2c::Lcd::new(&mut i2c, &mut delay)
+//! // Init LCD, takes ownership of I2C
+//! let mut lcd = Lcd::new(&mut i2c, Backlight::Off)
 //!     .address(LCD_ADDRESS)
-//!     .cursor_on(false) // no visible cursor
-//!     .rows(2) // two rows
-//!     .init().unwrap();
+//!     .cursor_on(true)
+//!     .rows(4)
+//!     .init(&mut delay)
+//!     .unwrap();
+//!
+//! loop {
+//!     // Write without ufmt
+//!     _ = lcd.return_home(&mut delay).clear();
+//!     _ = lcd.write_str("write str method");
+//!
+//!     // Delay half second
+//!     _ = delay.delay_ms(500);
+//! 
+//!     // Write with ufmt
+//!     _ = lcd.return_home(&mut delay).clear();
+//!     _ = write!(lcd, "ufmt write method");
+//! 
+//!     _ = delay.delay_ms(500);
+//! }
 //! ```
-//!
-//! This [site][lcd address] describes how to find the address of your LCD devices.
-//!
-//! [this one]: https://funduinoshop.com/elektronische-module/displays/lcd/16x02-i2c-lcd-modul-hintergrundbeleuchtung-blau
-//! [lcd address]: https://www.ardumotive.com/i2clcden.html
+//! Datasheet used link [here](https://uk.beta-layout.com/download/rk/RK-10290_410.pdf)
 
 use core::marker::PhantomData;
 
-use embedded_hal::blocking::{delay::DelayMs, i2c};
+use embedded_hal::blocking::{
+    delay::DelayMs,
+    i2c,
+    i2c::Write
+};
 
 use ufmt_write::uWrite;
 
 /// API to write to the LCD.
-/// PhantomData<D> used to ensure correct Delay without having to take ownership of delay.
+// PhantomData<D> used to ensure correct Delay without having to take ownership of delay.
 pub struct Lcd<'a, I, D>
 where
     I: i2c::Write,
