@@ -1,7 +1,7 @@
 # LCD HiLetGo 2004a I2C driver
 Driver to write characters to LCD displays with a HiLetGo 2004 20x4 display connected via i2c. It requires an I2C instance implementing [`embedded_hal::blocking::i2c::Write`] and an instance to delay execution with [`embedded_hal::blocking::delay::DelayMs`].
 
-Fork of Korbinian Maier's [i2c LCD crate](https://github.com/KuabeM/lcd-lcm1602-i2c). Primary difference (aside from supporting a different display) is in this implementation, the display takes a `&mut` rather than a `mut`, meaning users are able to use the display i2c for other purposes as well (at the cost of the i2c being static).
+Fork of Korbinian Maier's [i2c LCD crate](https://github.com/KuabeM/lcd-lcm1602-i2c). Primary difference (aside from supporting a different display) is in this implementation, the display takes a `&mut` rather than a `mut`, meaning users are able to use the display i2c for other purposes as well.
 
 ### Usage:
 ```rust

@@ -105,13 +105,13 @@ enum BitMode {
     Bit8 = 0x10,
 }
 
-impl<'a, I, D> Lcd<'a, I, D>
+impl<'a, I, D> Lcd<'static, I, D>
 where
     I: i2c::Write,
     D: DelayMs<u8>,
 {
     /// Create new instance with only the I2C and delay instance.
-    pub fn new(i2c: &'a mut I, backlight_state: Backlight) -> Self {
+    pub fn new(i2c: &'static mut I, backlight_state: Backlight) -> Self {
         Self {
             i2c,
             backlight_state,
@@ -255,5 +255,17 @@ where
             self.send(Commands::ShiftCursor as u8, Mode::Cmd)?;
         }
         Ok(())
+    }
+}
+
+impl<'a, I, D> uWrite for Lcd<'static, I, D>
+where
+    I: Write,
+    D: DelayMs<u8>,
+{
+    type Error = <I as Write>::Error;
+
+    fn write_str(&mut self, s: &str) -> Result<(), Self::Error> {
+        self.write_str(s)
     }
 }
