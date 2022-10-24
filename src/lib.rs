@@ -68,6 +68,7 @@ where
     phantomdata: PhantomData<D>,
 }
 
+// Enums for display operation
 pub enum DisplayControl {
     Off = 0x00,
     CursorBlink = 0x01,
@@ -101,45 +102,32 @@ enum BitMode {
     Bit8 = 0x10,
 }
 
-impl<'a, I, D> Lcd<'static, I, D>
+const DEFAULT_ROWS: u8 = 4;
+
+impl<'a, I, D> Lcd<'a, I, D>
 where
     I: i2c::Write,
     D: DelayMs<u8>,
 {
-    /// Create new instance with only the I2C and delay instance.
-    pub fn new(i2c: &'static mut I, backlight_state: Backlight) -> Self {
+    /// Create new instance with only the I2C and address
+    pub fn new(i2c: &'a mut I, address: u8) -> Self {
         Self {
             i2c,
-            backlight_state,
-            address: 0,
-            rows: 0,
+            backlight_state: Backlight::Off,
+            address: address,
+            rows: DEFAULT_ROWS,
             cursor_blink: false,
             cursor_on: false,
             phantomdata: PhantomData,
         }
     }
 
-    /// Set I2C address, see [lcd address].
-    ///
-    /// [lcd address]: https://badboi.dev/rust,/microcontrollers/2020/11/09/i2c-hello-world.html
-    pub fn address(mut self, address: u8) -> Self {
-        self.address = address;
-        self
-    }
-
-    pub fn cursor_on(mut self, on: bool) -> Self {
-        self.cursor_on = on;
-        self
-    }
-
-    pub fn cursor_blink(mut self, on: bool) -> Self {
-        self.cursor_blink = on;
-        self
-    }
-
-    /// Zero based number of rows.
-    pub fn rows(mut self, rows: u8) -> Self {
-        self.rows = rows;
+    /// Number of rows (either 2 or 4 supported)
+    pub fn set_rows(mut self, rows: u8) -> Self {
+        match rows {
+            2 | 4 => self.rows = rows,
+            _ => panic!(),
+        }
         self
     }
 
@@ -157,12 +145,10 @@ where
 
         // Init with 8 bit mode
         let mode_8bit = Mode::FunctionSet as u8 | BitMode::Bit8 as u8;
-        self.write4bits(mode_8bit)?;
-        delay.delay_ms(5);
-        self.write4bits(mode_8bit)?;
-        delay.delay_ms(5);
-        self.write4bits(mode_8bit)?;
-        delay.delay_ms(5);
+        for _ in 1..4 {
+            self.write4bits(mode_8bit)?;
+            delay.delay_ms(5);
+        }
 
         // Switch to 4 bit mode
         let mode_4bit = Mode::FunctionSet as u8 | BitMode::Bit4 as u8;
@@ -171,50 +157,49 @@ where
         // Display setup
         // Set mode either 2 or four lines
         // TODO: Verify for 20x4 screen
-        let lines = if self.rows == 0 { 0x00 } else { 0x08 };
+        let lines = if self.rows == 4 { 0x00 } else { 0x08 };
         self.send(Mode::FunctionSet as u8 | lines, Mode::Cmd)?;
-
-        // Set display on, optionally turn on cursor and cursor blink
-        let mut display_ctrl = DisplayControl::DisplayOn as u8;
-        if self.cursor_on {
-            display_ctrl |= DisplayControl::CursorOn as u8;
-
-            if self.cursor_blink {
-                display_ctrl |= DisplayControl::CursorBlink as u8;
-            }
-        }
-        self.send(Mode::DisplayControl as u8 | display_ctrl, Mode::Cmd)?;
 
         // Clear Display, also moves cursor to top left
         self.send(Mode::Cmd as u8 | Commands::Clear as u8, Mode::Cmd)?;
 
         // Entry right: shifting cursor moves to right
         self.send(0x04, Mode::Cmd)?;
-        self.backlight(self.backlight_state)?;
+        self.set_backlight_state(self.backlight_state)?;
         Ok(self)
     }
 
-    fn write4bits(&mut self, data: u8) -> Result<(), <I as i2c::Write>::Error> {
-        self.i2c.write(
-            self.address,
-            &[data | DisplayControl::DisplayOn as u8 | self.backlight_state as u8],
-        )?;
-        self.i2c.write(
-            self.address,
-            &[DisplayControl::Off as u8 | self.backlight_state as u8],
-        )?;
+    pub fn set_cursor_on(&mut self, on: bool) -> Result<(), <I as i2c::Write>::Error> {
+        self.cursor_on = on;
+
+        if self.cursor_on {
+            let mut display_ctrl = DisplayControl::DisplayOn as u8;
+            display_ctrl |= DisplayControl::CursorOn as u8;
+
+            if self.cursor_blink {
+                display_ctrl |= DisplayControl::CursorBlink as u8;
+            }
+
+            self.send(Mode::DisplayControl as u8 | display_ctrl, Mode::Cmd)?;
+        }
+
         Ok(())
     }
 
-    fn send(&mut self, data: u8, mode: Mode) -> Result<(), <I as i2c::Write>::Error> {
-        let high_bits: u8 = data & 0xf0;
-        let low_bits: u8 = (data << 4) & 0xf0;
-        self.write4bits(high_bits | mode as u8)?;
-        self.write4bits(low_bits | mode as u8)?;
+    pub fn set_cursor_blink(&mut self, on: bool) -> Result<(), <I as i2c::Write>::Error> {
+        self.cursor_blink = on;
+
+        if self.cursor_blink {
+            let mut display_ctrl = DisplayControl::DisplayOn as u8;
+            display_ctrl |= DisplayControl::CursorOn as u8 | DisplayControl::CursorBlink as u8;
+
+            self.send(Mode::DisplayControl as u8 | display_ctrl, Mode::Cmd)?;
+        }
+
         Ok(())
     }
 
-    pub fn backlight(&mut self, backlight: Backlight) -> Result<(), <I as i2c::Write>::Error> {
+    pub fn set_backlight_state(&mut self, backlight: Backlight) -> Result<(), <I as i2c::Write>::Error> {
         self.backlight_state = backlight;
         self.i2c.write(
             self.address,
@@ -257,9 +242,30 @@ where
         }
         Ok(())
     }
+
+    // Private funcs
+    fn write4bits(&mut self, data: u8) -> Result<(), <I as i2c::Write>::Error> {
+        self.i2c.write(
+            self.address,
+            &[data | DisplayControl::DisplayOn as u8 | self.backlight_state as u8],
+        )?;
+        self.i2c.write(
+            self.address,
+            &[DisplayControl::Off as u8 | self.backlight_state as u8],
+        )?;
+        Ok(())
+    }
+
+    fn send(&mut self, data: u8, mode: Mode) -> Result<(), <I as i2c::Write>::Error> {
+        let high_bits: u8 = data & 0xf0;
+        let low_bits: u8 = (data << 4) & 0xf0;
+        self.write4bits(high_bits | mode as u8)?;
+        self.write4bits(low_bits | mode as u8)?;
+        Ok(())
+    }
 }
 
-impl<'a, I, D> uWrite for Lcd<'static, I, D>
+impl<'a, I, D> uWrite for Lcd<'a, I, D>
 where
     I: Write,
     D: DelayMs<u8>,
