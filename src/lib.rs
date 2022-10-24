@@ -36,11 +36,11 @@
 //!
 //!     // Delay half second
 //!     _ = delay.delay_ms(500);
-//! 
+//!
 //!     // Write with ufmt
 //!     _ = lcd.return_home(&mut delay).clear();
 //!     _ = write!(lcd, "ufmt write method");
-//! 
+//!
 //!     _ = delay.delay_ms(500);
 //! }
 //! ```
@@ -48,11 +48,7 @@
 
 use core::marker::PhantomData;
 
-use embedded_hal::blocking::{
-    delay::DelayMs,
-    i2c,
-    i2c::Write
-};
+use embedded_hal::blocking::{delay::DelayMs, i2c, i2c::Write};
 
 use ufmt_write::uWrite;
 
@@ -248,7 +244,12 @@ where
     }
 
     /// Set the cursor to (rows, col). Coordinates are zero-based.
-    pub fn set_cursor(&mut self, row: u8, col: u8, delay: &mut D) -> Result<(), <I as i2c::Write>::Error> {
+    pub fn set_cursor(
+        &mut self,
+        row: u8,
+        col: u8,
+        delay: &mut D,
+    ) -> Result<(), <I as i2c::Write>::Error> {
         self.return_home(delay)?;
         let shift: u8 = row * 40 + col;
         for _i in 0..shift {
