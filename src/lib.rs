@@ -46,8 +46,6 @@
 //! ```
 //! Datasheet used link [here](https://uk.beta-layout.com/download/rk/RK-10290_410.pdf)
 
-use core::marker::PhantomData;
-
 use embedded_hal::blocking::{delay::DelayMs, i2c, i2c::Write};
 
 use ufmt_write::uWrite;
@@ -107,7 +105,7 @@ where
     backlight_state: Backlight,
     cursor_on: bool,
     cursor_blink: bool,
-    phantomdata: PhantomData<D>,
+    delay: D,
 }
 
 impl<'a, I, D> LcdUninit<'a, I, D>
@@ -116,7 +114,7 @@ where
     D: DelayMs<u8>,
 {
     /// Create new instance with only the I2C and address
-    pub fn new(i2c: &'a mut I, address: u8) -> Self {
+    pub fn new(i2c: &'a mut I, address: u8, delay: D) -> Self {
         Self {
             i2c,
             backlight_state: Backlight::On,
@@ -124,7 +122,7 @@ where
             num_rows: DEFAULT_ROWS,
             cursor_blink: false,
             cursor_on: false,
-            phantomdata: PhantomData,
+            delay: delay,
         }
     }
 
@@ -147,26 +145,26 @@ where
     /// [datasheet]: https://www.openhacks.com/uploadsproductos/eone-1602a1.pdf
     /// [code]: https://github.com/jalhadi/i2c-hello-world/blob/main/src/main.rs
     /// [blog post]: https://badboi.dev/rust,/microcontrollers/2020/11/09/i2c-hello-world.html
-    pub fn init(self, delay: &'a mut D) -> Result<Lcd<I, D>, <I as i2c::Write>::Error> {
+    pub fn init(self) -> Result<Lcd<'a, I, D>, <I as i2c::Write>::Error> {
         // Consume self to create and initialize Lcd
-        let mut lcd : Lcd<'a, I, D> = Lcd {
+        let mut lcd: Lcd<'a, I, D> = Lcd {
             i2c: self.i2c,
             backlight_state: self.backlight_state,
             address: self.address,
             num_rows: self.num_rows,
             cursor_blink: self.cursor_blink,
             cursor_on: self.cursor_on,
-            phantomdata: PhantomData
+            delay: self.delay,
         };
 
         // Initial delay to wait for init after power on.
-        delay.delay_ms(80);
+        lcd.delay.delay_ms(80);
 
         // Init with 8 bit mode
         let mode_8bit = Mode::FunctionSet as u8 | BitMode::Bit8 as u8;
         for _ in 1..4 {
             lcd.write4bits(mode_8bit)?;
-            delay.delay_ms(5);
+            lcd.delay.delay_ms(5);
         }
 
         // Switch to 4 bit mode
@@ -198,7 +196,7 @@ where
     backlight_state: Backlight,
     cursor_on: bool,
     cursor_blink: bool,
-    phantomdata: PhantomData<D>,
+    delay: D,
 }
 
 impl<'a, I, D> Lcd<'a, I, D>
@@ -252,7 +250,10 @@ where
         Ok(())
     }
 
-    pub fn set_backlight_state(&mut self, backlight: Backlight) -> Result<(), <I as i2c::Write>::Error> {
+    pub fn set_backlight_state(
+        &mut self,
+        backlight: Backlight,
+    ) -> Result<(), <I as i2c::Write>::Error> {
         self.backlight_state = backlight;
         self.i2c.write(
             self.address,
@@ -275,9 +276,9 @@ where
     }
 
     /// Return cursor to upper left corner, i.e. (0,0).
-    pub fn return_home(&mut self, delay: &mut D) -> Result<(), <I as i2c::Write>::Error> {
+    pub fn return_home(&mut self) -> Result<(), <I as i2c::Write>::Error> {
         self.send(Commands::ReturnHome as u8, Mode::Cmd)?;
-        delay.delay_ms(10);
+        self.delay.delay_ms(10);
         Ok(())
     }
 
@@ -286,9 +287,8 @@ where
         &mut self,
         row: u8,
         col: u8,
-        delay: &mut D,
     ) -> Result<(), <I as i2c::Write>::Error> {
-        self.return_home(delay)?;
+        self.return_home()?;
         let shift: u8 = row * 40 + col;
         for _i in 0..shift {
             self.send(Commands::ShiftCursor as u8, Mode::Cmd)?;
