@@ -5,10 +5,29 @@ Fork of Korbinian Maier's [i2c LCD crate](https://github.com/KuabeM/lcd-lcm1602-
 
 ### Usage:
 ```rust
-// Example using rp2040 rp-pico board support crate (also called BSP)
 const LCD_ADDRESS: u8 = 0x27; // Address depends on hardware, see datasheet link below
 
-// Create a I2C instance
+// Configure the clocks, delay
+let mut watchdog = Watchdog::new(ctx.device.WATCHDOG);
+
+let clocks = clocks::init_clocks_and_plls(
+    XOSC_CRYSTAL_FREQ,
+    ctx.device.XOSC,
+    ctx.device.CLOCKS,
+    ctx.device.PLL_SYS,
+    ctx.device.PLL_USB,
+    &mut ctx.device.RESETS,
+    &mut watchdog,
+)
+.ok()
+.unwrap();
+
+let delay = Delay::new(
+    ctx.core.SYST,
+    clocks.system_clock.get_freq().to_Hz(),
+);
+
+// Create an I2C instance
 let sda_pin = pins.gpio2.into_mode::<gpio::FunctionI2C>();
 let scl_pin = pins.gpio3.into_mode::<gpio::FunctionI2C>();
 
@@ -21,27 +40,28 @@ let mut i2c = I2C::i2c1(
     &clocks.system_clock,
 );
 
-// Init LCD, takes ownership of I2C
-let mut lcd = Lcd::new(&mut i2c, Backlight::Off)
-    .address(LCD_ADDRESS)
-    .cursor_on(true)
-    .rows(4)
-    .init(&mut delay)
+// Init LCD, takes ownership of delay
+let mut lcd = LcdUninit::new(&mut i2c, LCD_ADDRESS, delay)
+    .rows(RowMode::Four)
+    .init()
     .unwrap();
 
 loop {
     // Write without ufmt
-    _ = lcd.return_home(&mut delay).clear();
+    _ = lcd.return_home();
+    _ = lcd.clear();
     _ = lcd.write_str("write str method");
 
     // Delay half second
-    _ = delay.delay_ms(500);
+    lcd.delay_ms(500);
 
     // Write with ufmt
-    _ = lcd.return_home(&mut delay).clear();
+    _ = lcd.return_home();
+    _ = lcd.clear();
     _ = write!(lcd, "ufmt write method");
 
-    _ = delay.delay_ms(500);
+    // Delay half second
+    lcd.delay_ms(500);
 }
 ```
 Datasheet link [here](https://uk.beta-layout.com/download/rk/RK-10290_410.pdf)
