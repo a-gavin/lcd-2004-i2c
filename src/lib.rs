@@ -52,23 +52,13 @@ use embedded_hal::blocking::{delay::DelayMs, i2c, i2c::Write};
 
 use ufmt_write::uWrite;
 
-/// API to write to the LCD.
-// PhantomData<D> used to ensure correct Delay without having to take ownership of delay.
-pub struct Lcd<'a, I, D>
-where
-    I: i2c::Write,
-    D: DelayMs<u8>,
-{
-    i2c: &'a mut I,
-    address: u8,
-    rows: u8,
-    backlight_state: Backlight,
-    cursor_on: bool,
-    cursor_blink: bool,
-    phantomdata: PhantomData<D>,
+// Enums for display operation
+#[derive(Copy, Clone, PartialEq)]
+pub enum RowMode {
+    Two,
+    Four,
 }
 
-// Enums for display operation
 pub enum DisplayControl {
     Off = 0x00,
     CursorBlink = 0x01,
@@ -102,9 +92,25 @@ enum BitMode {
     Bit8 = 0x10,
 }
 
-const DEFAULT_ROWS: u8 = 4;
+const DEFAULT_ROWS: RowMode = RowMode::Four;
 
-impl<'a, I, D> Lcd<'a, I, D>
+/// API to write to the LCD.
+// PhantomData<D> used to ensure correct Delay without having to take ownership of delay.
+pub struct LcdUninit<'a, I, D>
+where
+    I: i2c::Write,
+    D: DelayMs<u8>,
+{
+    i2c: &'a mut I,
+    address: u8,
+    num_rows: RowMode,
+    backlight_state: Backlight,
+    cursor_on: bool,
+    cursor_blink: bool,
+    phantomdata: PhantomData<D>,
+}
+
+impl<'a, I, D> LcdUninit<'a, I, D>
 where
     I: i2c::Write,
     D: DelayMs<u8>,
@@ -113,21 +119,23 @@ where
     pub fn new(i2c: &'a mut I, address: u8) -> Self {
         Self {
             i2c,
-            backlight_state: Backlight::Off,
+            backlight_state: Backlight::On,
             address: address,
-            rows: DEFAULT_ROWS,
+            num_rows: DEFAULT_ROWS,
             cursor_blink: false,
             cursor_on: false,
             phantomdata: PhantomData,
         }
     }
 
-    /// Number of rows (either 2 or 4 supported)
-    pub fn set_rows(mut self, rows: u8) -> Self {
-        match rows {
-            2 | 4 => self.rows = rows,
-            _ => panic!(),
-        }
+    /// Number of rows (only 2 or 4 supported)
+    pub fn set_num_rows(mut self, num_rows: RowMode) -> Self {
+        self.num_rows = num_rows;
+        self
+    }
+
+    pub fn set_backlight_state(mut self, backlight: Backlight) -> Self {
+        self.backlight_state = backlight;
         self
     }
 
@@ -139,34 +147,79 @@ where
     /// [datasheet]: https://www.openhacks.com/uploadsproductos/eone-1602a1.pdf
     /// [code]: https://github.com/jalhadi/i2c-hello-world/blob/main/src/main.rs
     /// [blog post]: https://badboi.dev/rust,/microcontrollers/2020/11/09/i2c-hello-world.html
-    pub fn init(mut self, delay: &mut D) -> Result<Self, <I as i2c::Write>::Error> {
+    pub fn init(self, delay: &'a mut D) -> Result<Lcd<I, D>, <I as i2c::Write>::Error> {
+        // Consume self to create and initialize Lcd
+        let mut lcd : Lcd<'a, I, D> = Lcd {
+            i2c: self.i2c,
+            backlight_state: self.backlight_state,
+            address: self.address,
+            num_rows: self.num_rows,
+            cursor_blink: self.cursor_blink,
+            cursor_on: self.cursor_on,
+            phantomdata: PhantomData
+        };
+
         // Initial delay to wait for init after power on.
         delay.delay_ms(80);
 
         // Init with 8 bit mode
         let mode_8bit = Mode::FunctionSet as u8 | BitMode::Bit8 as u8;
         for _ in 1..4 {
-            self.write4bits(mode_8bit)?;
+            lcd.write4bits(mode_8bit)?;
             delay.delay_ms(5);
         }
 
         // Switch to 4 bit mode
         let mode_4bit = Mode::FunctionSet as u8 | BitMode::Bit4 as u8;
-        self.write4bits(mode_4bit)?;
+        lcd.write4bits(mode_4bit)?;
 
         // Display setup
         // Set mode either 2 or four lines
         // TODO: Verify for 20x4 screen
-        let lines = if self.rows == 4 { 0x00 } else { 0x08 };
-        self.send(Mode::FunctionSet as u8 | lines, Mode::Cmd)?;
-
-        // Clear Display, also moves cursor to top left
-        self.send(Mode::Cmd as u8 | Commands::Clear as u8, Mode::Cmd)?;
+        lcd.set_num_rows(lcd.num_rows)?;
+        lcd.clear()?;
 
         // Entry right: shifting cursor moves to right
-        self.send(0x04, Mode::Cmd)?;
-        self.set_backlight_state(self.backlight_state)?;
-        Ok(self)
+        lcd.send(0x04, Mode::Cmd)?;
+        lcd.set_backlight_state(self.backlight_state)?;
+
+        Ok(lcd)
+    }
+}
+
+pub struct Lcd<'a, I, D>
+where
+    I: i2c::Write,
+    D: DelayMs<u8>,
+{
+    i2c: &'a mut I,
+    address: u8,
+    num_rows: RowMode,
+    backlight_state: Backlight,
+    cursor_on: bool,
+    cursor_blink: bool,
+    phantomdata: PhantomData<D>,
+}
+
+impl<'a, I, D> Lcd<'a, I, D>
+where
+    I: i2c::Write,
+    D: DelayMs<u8>,
+{
+    /// Number of rows (only 2 or 4 supported)
+    pub fn set_num_rows(&mut self, num_rows: RowMode) -> Result<(), <I as i2c::Write>::Error> {
+        if self.num_rows == num_rows {
+            return Ok(());
+        }
+        self.num_rows = num_rows;
+
+        let lines = match self.num_rows {
+            RowMode::Two => 0x08,
+            RowMode::Four => 0x00,
+        };
+        self.send(Mode::FunctionSet as u8 | lines, Mode::Cmd)?;
+
+        Ok(())
     }
 
     pub fn set_cursor_on(&mut self, on: bool) -> Result<(), <I as i2c::Write>::Error> {
